@@ -5,7 +5,9 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 import requests
 from apscheduler.schedulers.background import BackgroundScheduler
+import pytz
 import asyncio
+from flask import Flask
 
 # Carregar variáveis do .env
 load_dotenv()
