@@ -1,129 +1,108 @@
 import logging
 import os
-from dotenv import load_dotenv
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
 import requests
+from dotenv import load_dotenv
+from telegram import Bot
+from telegram.ext import Updater, CommandHandler
 from apscheduler.schedulers.background import BackgroundScheduler
+import pandas as pd
+import pandas_ta as ta
+from binance.client import Client
 import pytz
+from datetime import datetime
 
 # Carregar variáveis do .env
 load_dotenv()
 
 TOKEN = os.getenv('BOT_TOKEN')
 CHANNEL_ID = os.getenv('CHANNEL_ID')
+BINANCE_API_KEY = os.getenv('BINANCE_API_KEY')
+BINANCE_API_SECRET = os.getenv('BINANCE_API_SECRET')
 
-if TOKEN is None:
-    print("Porra, não encontrei o BOT_TOKEN! Faz a porra do .env direito!")
-    exit(1)
+# Configuração do cliente da Binance
+client = Client(BINANCE_API_KEY, BINANCE_API_SECRET)
+
+# Configuração do bot
+bot = Bot(token=TOKEN)
 
 # Configuração de logging
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                    level=logging.INFO)
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Função para pegar o preço do BTC/BRL
 def get_btc_price():
-    try:
-        url = "https://api.binance.com/api/v3/ticker/price?symbol=BTCBRL"
-        response = requests.get(url)
-        if response.status_code == 200:
-            data = response.json()
-            price = float(data['price'])
-            return price
-        else:
-            print(f"Erro ao acessar a API Binance. Status: {response.status_code}")
-            return None
-    except Exception as e:
-        print(f"Erro ao pegar o preço: {str(e)}")
-        return None
+    ticker = client.get_symbol_ticker(symbol="BTCBRL")
+    return float(ticker['price'])
 
-# Função para pegar o RSI
-def get_rsi():
-    try:
-        url = "https://api.binance.com/api/v3/indicator/rsi?symbol=BTCBRL&interval=1h"
-        response = requests.get(url)
-        if response.status_code == 200:
-            data = response.json()
-            rsi = float(data['rsi'])
-            return rsi
-        else:
-            print(f"Erro ao acessar a API para RSI. Status: {response.status_code}")
-            return None
-    except Exception as e:
-        print(f"Erro ao pegar o RSI: {str(e)}")
-        return None
+# Função para calcular o RSI
+def calculate_rsi():
+    # Pegando os dados de 1h para o cálculo
+    df = pd.DataFrame(client.get_historical_klines("BTCBRL", Client.KLINE_INTERVAL_1HOUR, "1 day ago UTC"))
+    df = df.iloc[:, [0, 4]]  # Usando apenas as colunas de tempo e fechamento
+    df.columns = ['timestamp', 'close']
+    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+    df.set_index('timestamp', inplace=True)
 
-# Comando de inicialização /start
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text('Bot funcionando! Fica esperto, porra!')
-
-# Comando para pegar o preço do BTC/BRL
-async def price(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    price = get_btc_price()
-    if price:
-        await update.message.reply_text(f"🟦 BTC/BRL: R${price:,.2f}")
-    else:
-        await update.message.reply_text("Erro ao pegar o preço. Tenta de novo mais tarde.")
-
-# Função de envio de sinais
-def send_signals():
-    price = get_btc_price()
-    rsi = get_rsi()
-    if price is None or rsi is None:
-        return
-
-    if rsi < 30:  # Sinal de compra
-        action = "COMPRA"
-        tp = price * 1.02  # TP 2% para Day Trade
-        sl = price * 0.98  # SL 2% para Day Trade
-    elif rsi > 70:  # Sinal de venda
-        action = "VENDA"
-        tp = price * 0.98  # TP de -2% para Day Trade
-        sl = price * 1.02  # SL 2% para proteger
-    else:  # Esperar
-        action = "ESPERAR"
-        tp = price * 1.02  # TP 2% para Swing Trade
-        sl = price * 0.98  # SL 2% para Swing Trade
-
-    signal = f"""
-    🟦 BTC/BRL
-    🎯 Ação: {action}
-    💸 Preço: R${price:,.2f}
-    🎯 TP: R${tp:,.2f}
-    🛑 SL: R${sl:,.2f}
-    📍 RSI: {rsi} - {action} agora!
-    """
-
-    send_signal_to_channel(signal)
+    # Calculando o RSI
+    df['RSI'] = ta.rsi(df['close'], length=14)
+    return df['RSI'].iloc[-1]
 
 # Função para enviar o sinal para o canal do Telegram
-def send_signal_to_channel(signal):
-    application = Application.builder().token(TOKEN).build()
-    application.bot.send_message(chat_id=CHANNEL_ID, text=signal)
+def send_signal(signal):
+    bot.send_message(chat_id=CHANNEL_ID, text=signal)
 
-# Função para agendar os sinais de compra/venda
+# Função para verificar se é hora de enviar o sinal
+def check_signal():
+    price = get_btc_price()
+    rsi = calculate_rsi()
+
+    if rsi < 30:
+        action = "COMPRA"
+        tp = price * 1.02  # Exemplo de cálculo de TP
+        sl = price * 0.98  # Exemplo de cálculo de SL
+    elif rsi > 70:
+        action = "VENDA"
+        tp = price * 0.98
+        sl = price * 1.02
+    else:
+        action = "ESPERAR"
+        tp = None
+        sl = None
+
+    # Formatação da mensagem
+    message = f"🟦 BTC/BRL\n🎯 Day Trade\n🦈 Situação: {action}\n💸 Preço: R${price}\n"
+    if tp:
+        message += f"🎯 TP: R${tp}\n"
+    if sl:
+        message += f"🛑 SL: R${sl}\n"
+    message += f"📍 RSI 1h: {rsi}\n"
+
+    # Enviar o sinal
+    send_signal(message)
+
+# Função agendada para enviar sinais às 8h e 12h
 def schedule_signals():
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(send_signals, 'interval', minutes=20)  # Checa o preço a cada 20 minutos
+    scheduler = BackgroundScheduler(timezone=pytz.timezone("Brazil/East"))
+    scheduler.add_job(check_signal, 'cron', hour=8, minute=0)  # Envia o sinal de Day Trade às 8h
+    scheduler.add_job(check_signal, 'cron', hour=12, minute=0)  # Envia o sinal de Swing Trade às 12h
     scheduler.start()
 
-    scheduler.add_job(lambda: send_signals(), 'cron', hour=8, minute=0)  # Day Trade às 8:00
-    scheduler.add_job(lambda: send_signals(), 'cron', hour=12, minute=0)  # Swing Trade às 12:00
-
-# Função principal
+# Função para iniciar o bot e o agendamento
 def main():
-    # Criando o bot usando a versão 20.x do python-telegram-bot
-    application = Application.builder().token(TOKEN).build()
+    logging.info("Bot rodando, aguardando comandos... Fica esperto, porra!")
+    
+    # Rodando o agendador
+    schedule_signals()
+    
+    # Configuração do Updater
+    updater = Updater(TOKEN, use_context=True)
+    dispatcher = updater.dispatcher
+    
+    # Adicionando o comando /preco
+    dispatcher.add_handler(CommandHandler("preco", lambda update, context: update.message.reply_text(f"Preço atual do BTC/BRL: R${get_btc_price()}")))
 
-    # Adicionando comandos
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("price", price))
-
-    # Iniciando o bot
-    print("Bot rodando, aguardando comandos... Fica esperto, porra!")  # Exibe no console
-    schedule_signals()  # Agendar os sinais
-    application.run_polling()  # Rodar o bot
+    # Iniciar o polling do bot
+    updater.start_polling()
 
 if __name__ == '__main__':
-    main()  # Rodar o bot sem Flask
+    main()
