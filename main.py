@@ -4,10 +4,7 @@ from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 import requests
-import pytz
-from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
-from flask import Flask
 import asyncio
 
 # Carregar variáveis do .env
@@ -31,7 +28,7 @@ def get_btc_price():
     try:
         url = "https://api.binance.com/api/v3/ticker/price?symbol=BTCBRL"
         response = requests.get(url)
-        
+
         if response.status_code == 200:
             data = response.json()
             if 'price' in data:
@@ -53,7 +50,7 @@ def get_rsi():
     try:
         url = "https://api.binance.com/api/v3/indicator/rsi?symbol=BTCBRL&interval=1h"
         response = requests.get(url)
-        
+
         if response.status_code == 200:
             data = response.json()
             if 'rsi' in data:
@@ -133,25 +130,6 @@ def schedule_signals():
     scheduler.add_job(lambda: send_signals(), 'cron', hour=8, minute=0)  # Envia o Day Trade às 8:00 AM
     scheduler.add_job(lambda: send_signals(), 'cron', hour=12, minute=0)  # Envia o Swing Trade às 12:00 PM
 
-# Criação do Flask para manter o bot funcionando
-app = Flask(__name__)
-
-@app.route('/')
-def index():
-    return "Bot rodando, caralho!"
-
-# Função para rodar o Flask e o Bot juntos
-def run():
-    loop = asyncio.get_event_loop()  # Usando o loop de eventos atual
-    asyncio.set_event_loop(loop)
-    
-    # Iniciar o bot e o servidor Flask
-    from threading import Thread
-    bot_thread = Thread(target=main)
-    bot_thread.start()
-    
-    app.run(host='0.0.0.0', port=8080)  # Porta pública do Render
-
 # Função principal
 def main():
     # Criando o bot usando a versão 20.x do python-telegram-bot
@@ -167,4 +145,4 @@ def main():
     application.run_polling()
 
 if __name__ == '__main__':
-    run()  # Rodar o bot com Flask e asyncio
+    main()  # Rodar o bot sem o Flask
