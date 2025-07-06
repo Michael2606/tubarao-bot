@@ -142,13 +142,16 @@ def index():
 
 # Função para rodar o Flask e o Bot juntos
 def run():
+    # Criando o loop assíncrono e configurando para o bot
     loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)  # Criando o loop de eventos para o bot
+    asyncio.set_event_loop(loop)
+    
     # Iniciar o bot e o servidor Flask
     from threading import Thread
     bot_thread = Thread(target=main)
     bot_thread.start()
-    app.run(host='0.0.0.0', port=8080)
+    
+    app.run(host='0.0.0.0', port=8080)  # Porta pública do Render
 
 # Função principal
 def main():
