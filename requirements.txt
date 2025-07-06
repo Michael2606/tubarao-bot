@@ -4,4 +4,3 @@ python-binance
 python-dotenv
 APScheduler
 pytz
-imghdr
