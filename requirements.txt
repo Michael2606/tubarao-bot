@@ -1,6 +1,6 @@
-flask
+Flask==2.0.1
 python-telegram-bot==20.0
-requests
-pytz
-apscheduler==3.8.0
-python-dotenv
+requests==2.31.0
+apscheduler==3.8.1
+python-dotenv==0.19.2
+gunicorn==20.1.0
