@@ -4,4 +4,4 @@ apscheduler
 python-binance
 numpy
 pytz
-requests
+requests==2.31.0
