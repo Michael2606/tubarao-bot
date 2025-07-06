@@ -1,0 +1,21 @@
+# Arquivos e pastas que não queremos versionar
+
+# Arquivos do ambiente virtual (se estiver usando venv)
+venv/
+.env
+
+# Arquivos de cache do Python
+__pycache__/
+*.py[cod]
+
+# Arquivos de logs
+*.log
+
+# IDEs e arquivos temporários
+.idea/
+*.swp
+*.swo
+
+# Outras pastas que você não quer versionar
+*.db
+*.sqlite
