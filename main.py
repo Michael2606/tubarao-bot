@@ -1,104 +1,194 @@
+import logging
 import os
-import requests
-from datetime import datetime
-from dotenv import load_dotenv
 from telegram import Bot
+from telegram.ext import Updater, CommandHandler
+from dotenv import load_dotenv
+import requests
+import time
+from datetime import datetime
+import pytz
 
+# Carregar as variáveis do .env
 load_dotenv()
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHANNEL_ID = os.getenv("CHANNEL_ID")
+# Recupera as variáveis do .env
+TOKEN = os.getenv('BOT_TOKEN')
+CHANNEL_ID = os.getenv('CHANNEL_ID')
 
-HEADERS = {"User-Agent": "Mozilla/5.0"}
-BINANCE_URL = "https://api.binance.com/api/v3/klines"
-OKX_URL = "https://www.okx.com/api/v5/market/candles"
+if TOKEN is None:
+    print("Erro: BOT_TOKEN não encontrado no arquivo .env")
+    exit(1)
 
-bot = Bot(token=TELEGRAM_TOKEN)
+# Seu ID de usuário do Telegram (coloquei o seu ID real aqui)
+ADM_USER_ID = 7932105748  # Seu ID
 
-def get_binance_data(symbol):
-    params = {"symbol": symbol, "interval": "1h", "limit": 100}
-    response = requests.get(BINANCE_URL, headers=HEADERS, params=params)
-    return response.json()
+# Configuração de logging
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                    level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def get_okx_data(instId):
-    params = {"instId": instId, "bar": "1H", "limit": 100}
-    response = requests.get(OKX_URL, headers=HEADERS, params=params)
-    return response.json()
+# Função de envio de sinais
+def send_signal_to_channel(signal):
+    bot = Bot(TOKEN)
+    bot.send_message(chat_id=CHANNEL_ID, text=signal)
 
-def analisar_rsi(candles, is_okx=False):
-    closes = [float(c[4]) if not is_okx else float(c[4]) for c in candles[-14:]]
-    diffs = [closes[i+1] - closes[i] for i in range(len(closes) - 1)]
-    ganhos = [d if d > 0 else 0 for d in diffs]
-    perdas = [-d if d < 0 else 0 for d in diffs]
+# Função de obtenção do preço de BTC/BRL com verificação aprimorada
+def get_btc_price():
+    try:
+        url = "https://api.binance.com/api/v3/ticker/price?symbol=BTCBRL"
+        response = requests.get(url)
+        
+        # Verificando se a resposta é válida
+        if response.status_code == 200:
+            data = response.json()
+            if 'price' in data:
+                return float(data['price'])
+            else:
+                return "Erro: 'price' não encontrado na resposta da API"
+        else:
+            return f"Erro: Status {response.status_code} ao acessar a API"
+    except Exception as e:
+        return f"Erro: {str(e)}"
 
-    media_ganho = sum(ganhos) / 13
-    media_perda = sum(perdas) / 13
-    rs = media_ganho / media_perda if media_perda != 0 else 0
+# Comando /Price para verificar o preço e confirmar se o bot está online
+def price(update, context):
+    if update.message.from_user.id == ADM_USER_ID:  # Verifica se é o ADM
+        price = get_btc_price()
+        # Responde apenas com o preço, sem informações do usuário
+        if isinstance(price, float):
+            update.message.reply_text(f"🟦 BTC/BRL: R${price:,.2f}\nBot funcionando e online!")
+        else:
+            update.message.reply_text(price)  # Responde com erro caso algo dê errado
+    else:
+        update.message.reply_text('Você não tem permissão para usar esse comando.')
+
+# Função de análise de mercado
+def analyze_market():
+    # Usando a API pública da Binance para obter o preço atual de BTC/BRL
+    price = get_btc_price()
+
+    # Obtendo os dados históricos de 1h para calcular RSI
+    url_candles = "https://api.binance.com/api/v3/klines?symbol=BTCBRL&interval=1h&limit=100"
+    response_candles = requests.get(url_candles)
+    candles = response_candles.json()
+    
+    # Extraindo os preços de fechamento dos candles
+    closes = [float(candle[4]) for candle in candles]
+
+    # Calculando o RSI manualmente
+    rsi = calculate_rsi(closes)
+
+    # Análise para definir o TP e SL de forma dinâmica
+    support = min(closes[-5:])
+    resistance = max(closes[-5:])
+
+    tp = resistance
+    sl = support
+
+    # Lógica de envio de sinais com base no RSI
+    if rsi < 30:
+        signal = (f"🟦 BTC/BRL\n"
+                  f"🎯 Day Trade\n"
+                  f"🦈 Situação: COMPRA\n"
+                  f"💸 Preço: R${price:,.0f}\n"
+                  f"🎯 TP: R${tp:,.0f}\n"
+                  f"🛑 SL: R${sl:,.0f}\n"
+                  f"📍 RSI 1h abaixo de 30, candlestick mostrando fundo sólido.\n\n"
+                  f"🧱 Swing Trade\n"
+                  f"🦈 Situação: COMPRA\n"
+                  f"💸 Preço: R${price:,.0f}\n"
+                  f"🎯 TP: R${tp:,.0f}\n"
+                  f"🛑 SL: R${sl:,.0f}\n"
+                  f"📍 RSI abaixo de 30 com possibilidade de recuperação.")
+        send_signal_to_channel(signal)
+    elif rsi > 70:
+        signal = (f"🟦 BTC/BRL\n"
+                  f"🎯 Day Trade\n"
+                  f"🦈 Situação: VENDA\n"
+                  f"💸 Preço: R${price:,.0f}\n"
+                  f"🎯 TP: R${sl:,.0f}\n"
+                  f"🛑 SL: R${tp:,.0f}\n"
+                  f"📍 RSI 1h acima de 70, risco de reversão para baixa.\n\n"
+                  f"🧱 Swing Trade\n"
+                  f"🦈 Situação: VENDA\n"
+                  f"💸 Preço: R${price:,.0f}\n"
+                  f"🎯 TP: R${sl:,.0f}\n"
+                  f"🛑 SL: R${tp:,.0f}\n"
+                  f"📍 Tendência de reversão após forte alta, risco de queda.")
+        send_signal_to_channel(signal)
+    else:
+        signal = (f"🟦 BTC/BRL\n"
+                  f"🎯 Day Trade\n"
+                  f"🦈 Situação: ESPERAR\n"
+                  f"💸 Preço: R${price:,.0f}\n"
+                  f"🎯 TP: R${tp:,.0f}\n"
+                  f"🛑 SL: R${sl:,.0f}\n"
+                  f"📍 RSI entre 30 e 70, mercado sem tendência clara.\n\n"
+                  f"🧱 Swing Trade\n"
+                  f"🦈 Situação: ESPERAR\n"
+                  f"💸 Preço: R${price:,.0f}\n"
+                  f"🎯 TP: R${tp:,.0f}\n"
+                  f"🛑 SL: R${sl:,.0f}\n"
+                  f"📍 Tendência lateral. Aguardando direção clara.")
+        send_signal_to_channel(signal)
+
+# Função de cálculo do RSI manualmente
+def calculate_rsi(prices, period=14):
+    gains = []
+    losses = []
+    
+    for i in range(1, len(prices)):
+        change = prices[i] - prices[i-1]
+        if change >= 0:
+            gains.append(change)
+            losses.append(0)
+        else:
+            gains.append(0)
+            losses.append(abs(change))
+    
+    avg_gain = np.mean(gains[-period:])
+    avg_loss = np.mean(losses[-period:])
+    
+    if avg_loss == 0:
+        return 100  # Se não houver perda, RSI será 100
+
+    rs = avg_gain / avg_loss
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
-def gerar_sinal(nome, preco, rsi):
-    if rsi < 30:
-        situacao = "🎯 SINAL DE SWING TRADE\n🦈 Situação: COMPRA"
-        alvo = preco * 1.04
-        stop = preco * 0.96
-    elif rsi > 70:
-        situacao = "🎯 SINAL DE SWING TRADE\n🦈 Situação: VENDA"
-        alvo = preco * 0.96
-        stop = preco * 1.04
+# Função de enviar os sinais uma vez por dia
+def send_daily_signals():
+    # Horário de Brasília
+    tz = pytz.timezone('America/Sao_Paulo')
+    now = datetime.now(tz)
+
+    if now.hour == 8 and now.minute == 0:  # Enviar sinal de Day Trade às 8h
+        analyze_market()
+        print("Sinal de Day Trade enviado.")
+    elif now.hour == 12 and now.minute == 0:  # Enviar sinal de Swing Trade às 12h
+        analyze_market()
+        print("Sinal de Swing Trade enviado.")
     else:
-        return None
+        print(f"Aguardando horário para enviar sinal... {now.strftime('%H:%M')}")
 
-    return f"""{situacao}
-💸 Preço: R${preco:,.2f}
-🎯 Alvo (TP): R${alvo:,.2f}
-🛑 Stop (SL): R${stop:,.2f}
-📍Contexto: RSI em {rsi:.2f}. O ativo está em região de {'sobrecompra' if rsi > 70 else 'sobrevenda'}.
-"""
-
-def enviar_sinal(msg):
-    bot.send_message(chat_id=CHANNEL_ID, text=msg)
-
+# Função principal
 def main():
-    sinais = []
+    updater = Updater(token=TOKEN, use_context=True)
+    dispatcher = updater.dispatcher
 
-    # BTC/BRL (Binance)
-    btc_data = get_binance_data("BTCBRL")
-    btc_price = float(btc_data[-1][4])
-    btc_rsi = analisar_rsi(btc_data)
-    sinal_btc = gerar_sinal("BTC", btc_price, btc_rsi)
-    if sinal_btc:
-        sinais.append(f"📊 BTC/BRL (Binance)\n{sinal_btc}")
+    # Comando start
+    dispatcher.add_handler(CommandHandler("start", lambda update, context: update.message.reply_text('Bot funcionando!')))
+    
+    # Comando price
+    dispatcher.add_handler(CommandHandler("price", price))  # Aqui adicionamos o comando /Price
 
-    # ETH/BRL (Binance)
-    eth_data = get_binance_data("ETHBRL")
-    eth_price = float(eth_data[-1][4])
-    eth_rsi = analisar_rsi(eth_data)
-    sinal_eth = gerar_sinal("ETH", eth_price, eth_rsi)
-    if sinal_eth:
-        sinais.append(f"📊 ETH/BRL (Binance)\n{sinal_eth}")
+    # Inicia o bot
+    updater.start_polling()
 
-    # SOL/BRL (Binance)
-    sol_data = get_binance_data("SOLBRL")
-    sol_price = float(sol_data[-1][4])
-    sol_rsi = analisar_rsi(sol_data)
-    sinal_sol = gerar_sinal("SOL", sol_price, sol_rsi)
-    if sinal_sol:
-        sinais.append(f"📊 SOL/BRL (Binance)\n{sinal_sol}")
+    # Rodar a análise a cada 1 minuto
+    while True:
+        send_daily_signals()
+        time.sleep(60)  # Espera 1 minuto antes de verificar novamente
 
-    # XRP/BRL (OKX)
-    xrp_data = get_okx_data("XRP-BRL")
-    xrp_price = float(xrp_data['data'][0][4])
-    xrp_rsi = analisar_rsi(xrp_data['data'], is_okx=True)
-    sinal_xrp = gerar_sinal("XRP", xrp_price, xrp_rsi)
-    if sinal_xrp:
-        sinais.append(f"📊 XRP/BRL (OKX)\n{sinal_xrp}")
-
-    if sinais:
-        hoje = datetime.now().strftime("%d/%m/%Y")
-        header = f"📅 SINAIS DO DIA – {hoje}\n\n"
-        mensagem = header + "\n".join(sinais)
-        enviar_sinal(mensagem)
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
