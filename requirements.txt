@@ -1,6 +1,7 @@
-python-telegram-bot==20.8
-requests==2.31.0
-python-binance==1.0.17
-apscheduler==3.10.4
-ta==0.10.2
+python-telegram-bot==20.7
+python-dotenv
+apscheduler
+python-binance
+numpy
 pytz
+requests
