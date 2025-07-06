@@ -6,3 +6,4 @@ python-binance
 python-telegram-bot
 pandas_ta
 flask
+pytz
