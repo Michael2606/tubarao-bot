@@ -1,63 +1,96 @@
-from binance.client import Client
 import os
+import requests
+import pandas as pd
+from telegram import Bot
+from apscheduler.schedulers.blocking import BlockingScheduler
 from dotenv import load_dotenv
-from apscheduler.schedulers.background import BackgroundScheduler
 
-# Carrega as variáveis de ambiente do arquivo .env
 load_dotenv()
 
-# Pega a chave pública (API Key) da Binance
-API_KEY = os.getenv("BINANCE_API_KEY")
+TOKEN = os.getenv("TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
+bot = Bot(token=TOKEN)
 
-# Inicializa o cliente Binance (sem a chave secreta, pois não vamos fazer trade)
-client = Client(API_KEY)
+def get_price():
+    url = 'https://api.binance.com/api/v3/ticker/price?symbol=BTCBRL'
+    response = requests.get(url)
+    data = response.json()
+    return float(data['price'])
 
-# Função para pegar o preço do BTC/BRL
-def get_btc_price():
-    ticker = client.get_symbol_ticker(symbol="BTCBRL")
-    return ticker['price']
+def get_rsi(interval='1h', limit=100):
+    url = f"https://api.binance.com/api/v3/klines?symbol=BTCBRL&interval={interval}&limit={limit}"
+    response = requests.get(url)
+    data = response.json()
+    closes = [float(candle[4]) for candle in data]
+    df = pd.DataFrame(closes, columns=['close'])
+    delta = df['close'].diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.rolling(window=14).mean()
+    avg_loss = loss.rolling(window=14).mean()
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
+    return round(rsi.iloc[-1], 2)
 
-# Função para enviar os sinais (simulação)
-def send_signals():
-    price = get_btc_price()
-    # Verifica RSI ou outras condições e envia o sinal
-    print(f"Enviando Sinal: O preço atual do BTC/BRL é R${price}")
+def gerar_sinal(rsi, preco, tipo):
+    if rsi < 30:
+        situacao = "COMPRA"
+        tp = preco * 1.012
+        sl = preco * 0.985
+    elif rsi > 70:
+        situacao = "VENDA"
+        tp = preco * 0.985
+        sl = preco * 1.012
+    else:
+        situacao = "ESPERAR"
+        tp = sl = 0
+
+    if tipo == "day":
+        desc = f"📍 RSI 1h em {rsi}. Análise curta para movimentos rápidos."
+    else:
+        desc = f"📍 RSI 4h em {rsi}. Tendência mais ampla para posição de swing."
+
+    if situacao == "ESPERAR":
+        return f"🟦 BTC/BRL\n🎯 {('Day Trade' if tipo == 'day' else 'Swing Trade')}\n🦈 Situação: {situacao}\n💸 Preço: R${preco:,.2f}".replace(",", ".")
     
-    # Exemplo de formato de sinal
-    signal = f"""
-🟦 BTC/BRL
-🎯 Day Trade
-🦈 Situação: COMPRA
-💸 Preço: R${price}
-🎯 TP: R${float(price) * 1.02}  # Exemplo de cálculo de TP
-🛑 SL: R${float(price) * 0.98}  # Exemplo de cálculo de SL
-📍 RSI 1h acima de 65, candle de rompimento com volume crescente.
+    return (
+        f"🟦 BTC/BRL\n"
+        f"🎯 {('Day Trade' if tipo == 'day' else 'Swing Trade')}\n"
+        f"🦈 Situação: {situacao}\n"
+        f"💸 Preço: R${preco:,.2f}\n"
+        f"🎯 TP: R${tp:,.2f}\n"
+        f"🛑 SL: R${sl:,.2f}\n"
+        f"{desc}"
+    ).replace(",", ".")
 
-🧱 Swing Trade
-🦈 Situação: COMPRA
-💸 Preço: R${price}
-🎯 TP: R${float(price) * 1.05}  # Exemplo de cálculo de TP para swing trade
-🛑 SL: R${float(price) * 0.95}  # Exemplo de cálculo de SL para swing trade
-📍 Gráfico 4h firme em tendência de alta com RSI subindo.
-    """
-    print(signal)  # Simulação de envio de sinal (substitua com o envio real para o Telegram)
+def send_signals():
+    hora = pd.Timestamp.now(tz='America/Sao_Paulo').hour
+    preco = get_price()
+    if hora == 8:
+        rsi = get_rsi('1h')
+        mensagem = gerar_sinal(rsi, preco, tipo="day")
+        bot.send_message(chat_id=CHAT_ID, text=mensagem)
+    elif hora == 12:
+        rsi = get_rsi('4h')
+        mensagem = gerar_sinal(rsi, preco, tipo="swing")
+        bot.send_message(chat_id=CHAT_ID, text=mensagem)
+    else:
+        print(f"[{hora}h] Ping feito só pra manter o bot acordado.")
 
-# Agendando o envio de sinais
-def schedule_signals():
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(send_signals, 'interval', minutes=20)  # Checa o preço a cada 20 minutos
+def comando_preco(update, context):
+    preco = get_price()
+    context.bot.send_message(chat_id=update.effective_chat.id, text=f"🟦 Preço atual do BTC/BRL: R${preco:,.2f}".replace(",", "."))
+
+def main():
+    from telegram.ext import Updater, CommandHandler
+    updater = Updater(token=TOKEN, use_context=True)
+    dp = updater.dispatcher
+    dp.add_handler(CommandHandler("preco", comando_preco))
+    updater.start_polling()
+
+    scheduler = BlockingScheduler(timezone='America/Sao_Paulo')
+    scheduler.add_job(send_signals, 'interval', minutes=20)
     scheduler.start()
 
-# Função principal
-def main():
-    print("Bot rodando, aguardando comandos... Fica esperto, porra!")
-    schedule_signals()  # Agendar os sinais
-    try:
-        while True:
-            pass  # O bot ficará rodando, mas não fará nada até o agendamento ser acionado
-    except (KeyboardInterrupt, SystemExit):
-        print("Bot parado.")
-
-# Rodando o bot
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
