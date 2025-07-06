@@ -8,6 +8,7 @@ import pytz
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask
+import asyncio
 from threading import Thread
 
 # Carregar variáveis do .env
