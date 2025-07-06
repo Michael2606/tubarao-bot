@@ -142,8 +142,7 @@ def index():
 
 # Função para rodar o Flask e o Bot juntos
 def run():
-    # Criando o loop assíncrono e configurando para o bot
-    loop = asyncio.new_event_loop()
+    loop = asyncio.get_event_loop()  # Usando o loop de eventos atual
     asyncio.set_event_loop(loop)
     
     # Iniciar o bot e o servidor Flask
