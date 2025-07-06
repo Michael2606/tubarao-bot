@@ -9,7 +9,6 @@ from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask
 import asyncio
-from threading import Thread
 
 # Carregar variáveis do .env
 load_dotenv()
@@ -143,6 +142,8 @@ def index():
 
 # Função para rodar o Flask e o Bot juntos
 def run():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)  # Criando o loop de eventos para o bot
     # Iniciar o bot e o servidor Flask
     from threading import Thread
     bot_thread = Thread(target=main)
@@ -164,4 +165,4 @@ def main():
     application.run_polling()
 
 if __name__ == '__main__':
-    run()  # Rodar o bot com Flask
+    run()  # Rodar o bot com Flask e asyncio
