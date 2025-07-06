@@ -1,5 +1,8 @@
-python-telegram-bot==20.0
-requests==2.31.0
-apscheduler==3.8.1
-python-dotenv==0.19.2
-pytz==2025.2
+python-dotenv
+requests
+apscheduler
+pandas
+python-binance
+python-telegram-bot
+pandas_ta
+flask
