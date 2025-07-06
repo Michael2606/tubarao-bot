@@ -7,6 +7,8 @@ import requests
 import pytz
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
+from flask import Flask
+from threading import Thread
 
 # Carregar variáveis do .env
 load_dotenv()
@@ -131,6 +133,21 @@ def schedule_signals():
     scheduler.add_job(lambda: send_signals(), 'cron', hour=8, minute=0)  # Envia o Day Trade às 8:00 AM
     scheduler.add_job(lambda: send_signals(), 'cron', hour=12, minute=0)  # Envia o Swing Trade às 12:00 PM
 
+# Criação do Flask para manter o bot funcionando
+app = Flask(__name__)
+
+@app.route('/')
+def index():
+    return "Bot rodando, caralho!"
+
+# Função para rodar o Flask e o Bot juntos
+def run():
+    # Iniciar o bot e o servidor Flask
+    from threading import Thread
+    bot_thread = Thread(target=main)
+    bot_thread.start()
+    app.run(host='0.0.0.0', port=8080)
+
 # Função principal
 def main():
     # Criando o bot usando a versão 20.x do python-telegram-bot
@@ -146,4 +163,4 @@ def main():
     application.run_polling()
 
 if __name__ == '__main__':
-    main()
+    run()  # Rodar o bot com Flask
